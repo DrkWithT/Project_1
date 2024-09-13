@@ -1,6 +1,7 @@
 # Chat Protocol Spec. 1
 
-### Authors: Group 6 (Derek, Runyi, Kyle)
+### Authors (Group 6)
+Derek, Runyi, Kyle
 
 ### 1.0 Brief:
 This document describes a mini specification of our protocol designed for Programming Project 1 of CS 4470.
@@ -13,7 +14,7 @@ Provide a reliable and simple application layer protocol that fulfills connectio
  - Connections are stateful, changing their data upon actions. 
  - Uses framed messages follow action code, payload.
  - Types have a special binary encoding: Type-Code, Payload 
-    - Int, String
+    - Cap, Int, Bool, Str
  - A dictionary per peer should track IPs by an ID. It's like a phonebook the peer has to talk to its friends!
 
 ### 4.0 Connection Lifecycle:
