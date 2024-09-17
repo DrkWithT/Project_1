@@ -14,7 +14,7 @@ Provide a reliable and simple application layer protocol that fulfills connectio
  - Connections are stateful, changing their data upon actions. 
  - Uses framed messages follow action code, payload.
  - Types have a special binary encoding: Type-Code, Payload 
-    - Cap, Int, Bool, Str
+    - Cap, Num, Bool, Str
  - A dictionary per peer should track IPs by an ID. It's like a phonebook the peer has to talk to its friends!
 
 ### 4.0 Connection Lifecycle:
@@ -26,16 +26,24 @@ Provide a reliable and simple application layer protocol that fulfills connectio
 ### 5.0 Protocol Types:
  - Cap (0x00): 2 bytes of `0x00 0x00` ending any message
  - Bool (0x01): byte representing true/false as `0x01 or 0x00`
- - Int (0x02): 2-byte short
- - Str (0x03): Int length N & then N ASCII characters 
+ - Num (0x02): 2-byte short
+ - Str (0x03): Num length N & then N ASCII characters 
 
 ### 6.0 protocol:
 This section describes how the protocol frames messages. Connections are managed or used relative to some required commands.
 
+#### 6.1 "Ack":
+For affirming when a connection protocol action succeeded, e.g connecting, sending a chat message, etc.
+```
+Action: Num (0x0)
+OK-Flag: Bool
+Cap
+```
+
 #### 6.1 Connect:
 Opens a connection and give the app instance's address to a peer. This cannot be run when the target address is to self or invalid.
 ```
-Action: Int (0x1)
+Action: Num (0x1)
 Target-Addr: Str (IP:PORT)
 Cap
 ```
@@ -43,7 +51,7 @@ Cap
 #### 6.2 Terminate One:
 Closes a connection with a specific peer. This action can be repeated to all _other_ peers on exiting, and all other peers must act accordingly. They must remove that exiting peer's IP from their dictionaries. However, this action must fail on an invalid address (given from local dictionary's ID)
 ```
-Action: Int (0x2)
+Action: Num (0x2)
 Exiting-Addr: Str (IP:PORT)
 Cap
 ```
@@ -51,7 +59,7 @@ Cap
 #### 6.3 Send chat action:
 Send a message to a peer. This cannot be done with a closed / absent connection.
 ```
-Action: Int (0x3)
+Action: Num (0x3)
 Sender-Addr: Str (IP:PORT)
 Message: Str
 Cap
