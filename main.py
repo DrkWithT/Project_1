@@ -1,119 +1,193 @@
-"""
-    main.py
-    Main code for the chat app peer. See instructions and docs folder for details.
-    Group 6 of CS 4470 Fall 2024
-"""
 import socket
 import threading
 import sys
-import select
 
-#storing connection
-connection_list = []
-
+# Store connection information
+connections = {}
+connections_lock = threading.Lock()
+my_port = None
+my_ip = None
 
 def handle_client(conn, addr):
-    print(f"New connection from {addr} connected.")
-    connection_list.append(conn)
     while True:
-        # might change this part, not sure
         try:
             message = conn.recv(4096).decode("utf-8")
             if not message:
                 break
-            message = f"Message received: {message}"
-            conn.send(message.encode("utf-8"))
+            if message == "TERMINATE":
+                print(f"\nConnection terminated by {addr[0]}:{addr[1]}")
+                break
+            print(f"\nMessage received from {addr[0]}")
+            print(f"Sender's Port: {addr[1]}")
+            print(f"Message: \"{message}\"")
+            print("> ", end='', flush=True)
         except Exception as e:
-            print(f"Error {e}")
+            print(f"Error: {e}")
+            break
     conn.close()
+    # Remove connection from the list
+    with connections_lock:
+        for cid, (c_conn, c_addr) in list(connections.items()):
+            if c_conn == conn:
+                del connections[cid]
+                break
+    print(f"Connection from {addr} closed.")
 
 def command_help():
-    help_message = ("1.help - Display this help message \n"
-                    "2.myip - Display the IP address of the host\n"
-                    "3.myport - Display the port number of the host\n"
-                    "4.connect <destination> <port no> - \n"
-                    "5.list - Display a numbered list of all the coonections this process is part of\n"
-                    "6.terminate <connection id> - Will terminate the connection\n"
-                    "7.send <connection id> <message> - will send the message to the host on the connection\n"
-                    "8.exit - Close the connection")
-    return help_message
+    return (
+        "1. help - Display this help message\n"
+        "2. myip - Display the IP address of the host\n"
+        "3. myport - Display the port number of the host\n"
+        "4. connect <destination> <port no> - Connect to another peer\n"
+        "5. list - Display a numbered list of all connections\n"
+        "6. terminate <connection id> - Terminate the connection\n"
+        "7. send <connection id> <message> - Send a message to a peer\n"
+        "8. exit - Close all connections and exit the program"
+    )
 
 def command_myip():
-    ## getting the hostname by socket.gethostname() method
-    hostname = socket.gethostname()
-    ## getting the IP address using socket.gethostbyname() method
-    ip_address = socket.gethostbyname(hostname)
-    return ip_address
+    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    try:
+        # Doesn't have to be reachable
+        s.connect(('8.8.8.8', 80))
+        ip = s.getsockname()[0]
+    except Exception:
+        ip = '127.0.0.1'
+    finally:
+        s.close()
+    return ip
 
 def command_send(connection_id, message):
+    connection_id = int(connection_id)
+    with connections_lock:
+        if connection_id in connections:
+            conn = connections[connection_id][0]
+            conn.send(message.encode("utf-8"))
+            print(f"Message sent to connection ID {connection_id}.")
+        else:
+            print(f"Connection ID {connection_id} does not exist.")
+
+def is_valid_ip(ip):
     try:
-        #-1 because of the index
-        print(connection_list)
-        connection = connection_list[int(connection_id) - 1]
-        connection[0].send(message.encode("utf-8"))
-        print(f"Message sent")
-    except Exception as e:
-        print(f"Error {e}")
+        socket.inet_aton(ip)
+        return True
+    except socket.error:
+        return False
 
 def command_connect(target_ip, port):
+    if not is_valid_ip(target_ip):
+        print("Error: Invalid IP address.")
+        return
+    if target_ip == my_ip and int(port) == int(my_port):
+        print("Error: Cannot connect to self.")
+        return
+    with connections_lock:
+        for conn in connections.values():
+            if conn[1][0] == target_ip and int(conn[1][1]) == int(port):
+                print("Error: Duplicate connection.")
+                return
     try:
         connect_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         connect_socket.connect((target_ip, int(port)))
-        print(f"Connected to {target_ip}:{port}")
+        # Exchange listening ports
+        connect_socket.send(str(my_port).encode('utf-8'))
+        peer_listening_port = connect_socket.recv(1024).decode('utf-8')
 
-        connection_list.append(connect_socket)
+        with connections_lock:
+            connection_id = len(connections) + 1
+            connections[connection_id] = (connect_socket, (target_ip, peer_listening_port))
+        print(f"Connected to {target_ip}:{peer_listening_port} as ID: {connection_id}")
+
+        threading.Thread(target=handle_client, args=(connect_socket, (target_ip, peer_listening_port))).start()
     except Exception as e:
-        print(f"Error {e}")
+        print(f"Error: {e}")
 
-def commend_terminate(connection_id):
-    try:
-        connection = connection_list[int(connection_id) - 1]
-        connection[0].close()
-    except Exception as e:
-        print(f"Error {e}")
+def command_terminate(connection_id):
+    connection_id = int(connection_id)
+    with connections_lock:
+        if connection_id in connections:
+            conn = connections[connection_id][0]
+            # Send termination message
+            try:
+                conn.send("TERMINATE".encode('utf-8'))
+            except:
+                pass
+            conn.close()
+            del connections[connection_id]
+            print(f"Connection ID {connection_id} terminated.")
+        else:
+            print(f"Connection ID {connection_id} does not exist.")
 
-def start_ServerClient(port):
-    server_side = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_side.bind((command_myip(), int(port)))
-    server_side.listen(5)
+def command_list():
+    with connections_lock:
+        if connections:
+            print("id: IP Address       Port No.")
+            for cid, (conn, addr) in connections.items():
+                print(f"{cid}: {addr[0]:<15} {addr[1]}")
+        else:
+            print("No active connections.")
 
-    print(f"Server start, listening on:{command_myip()}:{port}")
+def start_server_client(port):
+    global my_ip, my_port
+    my_port = port
+    my_ip = command_myip()
 
-    # start a thread to accept one client connection
-    def accept_connect():
-        #make it keep running
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server_socket.bind((my_ip, int(port)))
+    server_socket.listen(5)
+
+    print(f"Server started, listening on: {my_ip}:{port}")
+
+    def accept_connections():
         while True:
-            conn, addr = server_side.accept()
-            thread = threading.Thread(target=handle_client, args=(conn, addr))
-            thread.start()
-            print(f"Accepted connection from {addr}")
+            conn, addr = server_socket.accept()
+            # Exchange listening ports
+            peer_listening_port = conn.recv(1024).decode('utf-8')
+            conn.send(str(my_port).encode('utf-8'))
 
-    #start a thread to keep running and accept one client connection, so we can continue the code
-    threading.Thread(target=accept_connect).start()
+            with connections_lock:
+                connection_id = len(connections) + 1
+                connections[connection_id] = (conn, (addr[0], peer_listening_port))
+            threading.Thread(target=handle_client, args=(conn, (addr[0], peer_listening_port))).start()
+            print(f"Accepted connection from {addr[0]}:{peer_listening_port} as ID: {connection_id}")
+
+    threading.Thread(target=accept_connections, daemon=True).start()
 
     while True:
-        command = input("> ").strip().split(" ")
+        command = input("> ").strip()
+        if not command:
+            continue
+        parts = command.split()
+        cmd = parts[0]
 
-        if command[0] == "help":
+        if cmd == "help":
             print(command_help())
-        elif command[0] == "myip":
-            print(command_myip())
-        elif command[0] == "myport":
-            print(f"The port number is {port}")
-        elif command[0] == "connect":
-            command_connect(command[1], command[2])
-        elif command[0] == "send":
-            command_send(command[1], command[2])
-
-
-    sys.exit(0)
+        elif cmd == "myip":
+            print(my_ip)
+        elif cmd == "myport":
+            print(f"The port number is {my_port}")
+        elif cmd == "connect" and len(parts) == 3:
+            command_connect(parts[1], parts[2])
+        elif cmd == "send" and len(parts) >= 3:
+            connection_id = parts[1]
+            message = ' '.join(parts[2:])
+            command_send(connection_id, message)
+        elif cmd == "terminate" and len(parts) == 2:
+            command_terminate(parts[1])
+        elif cmd == "list":
+            command_list()
+        elif cmd == "exit":
+            with connections_lock:
+                for cid in list(connections.keys()):
+                    command_terminate(cid)
+            sys.exit(0)
+        else:
+            print("Invalid command. Type 'help' for a list of commands.")
 
 if __name__ == '__main__':
-    # start main code here
-    # if command length nor right then exit
     if len(sys.argv) != 2:
-        print("Wrong format, please re-enter")
+        print("Wrong format, please re-enter. Usage: ./chat <port no.>")
         sys.exit(1)
 
     port_number = sys.argv[1]
-    start_ServerClient(port_number)
+    start_server_client(port_number)
