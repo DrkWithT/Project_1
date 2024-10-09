@@ -203,9 +203,12 @@ class Peer:
 
         # TODO send exiting / closing messages per protocol to all other peers for their notice
         for conn in self.connection_list:
-            temp_sock = conn[0]
-            self.proto_out.write_message(temp_sock, pconsts.PROTO_ACTION_TERMINATE, None)
-            temp_sock.close()
+            try:
+                temp_sock = conn[0]
+                self.proto_out.write_message(temp_sock, pconsts.PROTO_ACTION_TERMINATE, None)
+                temp_sock.close()
+            except Exception as io_err:
+                pass
 
 # NOTE We must begin the main code here under guarding if: no accidental runs on import in Python!
 if __name__ == '__main__':
@@ -228,5 +231,5 @@ if __name__ == '__main__':
         sys.exit(1)
 
     # start peer application by wrapper class
-    app = Peer()
+    app = Peer(port_number)
     app.run()
