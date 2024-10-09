@@ -113,10 +113,12 @@ def command_terminate(connection_id):
             if connection_id in connections:
                 conn, addr = connections[connection_id]
                 conn.send("TERMINATE".encode('utf-8'))
-                conn.close()
-                del connections[connection_id]
-                print(f"Connection ID {connection_id} terminated.")
+                time.sleep(1)  # Allow time for the message to be sent and received
 
+                conn.shutdown(socket.SHUT_RDWR)
+                conn.close()
+
+                print(f"Connection ID {connection_id} terminated.")
             else:
                 print(f"Connection ID {connection_id} does not exist.")
 
@@ -131,10 +133,11 @@ def command_exit(server_socket):
             try:
                 conn.send("TERMINATE".encode('utf-8'))
                 time.sleep(1)  # Allow time for the message to be sent and received
-                conn.shutdown(socket.SHUT_RDWR)
+
+                conn.shutdown(socket.SHUT_RDWR) # check it later
+                conn.close()
             except:
                 pass
-            conn.close()
 
     print("Shutting down the server...")
     sys.exit(0)
