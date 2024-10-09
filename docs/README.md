@@ -15,7 +15,6 @@ This will be a peer-to-peer LAN chat application with a CLI. Actions include man
     - Note: Keep repo private to team members only!
 
 ### To-Do's:
- 1. Plan protocol and structure of application.
- 2. Implement and test basic CLI skeleton.
- 3. Implement and test protocol.
- 4. Final testing, integration.
+ 1. Implement and test basic CLI skeleton. (DONE)
+ 2. Implement protocol and structure of application. (WIP)
+ 3. Final testing, integration.
