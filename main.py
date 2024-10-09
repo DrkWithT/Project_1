@@ -15,13 +15,13 @@ DEFAULT_BACKLOG = 12
 
 class Peer:
     def __init__(self, port: int) -> None:
-        self.my_address = socket.gethostbyname(socket.gethostname())
+        self.my_address = socket.gethostbyname_ex(socket.gethostname())[2][1]
         self.my_port = port
         self.listen_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # group of currently added connections, imitate a unique set
-        self.connection_dict: dict[str, tuple[socket.socket, socket._RetAddress]] = {}
+        self.connection_dict: dict[str, tuple] = {}
         # for holding both peer initiated and other initiated connection states
-        self.connection_list: list[tuple[socket.socket, socket._RetAddress]] = []
+        self.connection_list: list[tuple] = []
         # for outgoing messages by our protocol
         self.proto_out = proto.Messager()
 
@@ -54,11 +54,11 @@ class Peer:
 
             # validate connecting arguments by excluding duplicate or self-directed ones...
 
-            if dest_addr_arg == self.my_address and port_arg == self.my_port:
+            if dest_addr_arg == self.my_address and int(port_arg) == self.my_port:
                 print("Error: self-connections disallowed.")
                 return
 
-            if self.connection_dict.get(dest_addr_arg) is not None:
+            if not (self.connection_dict.get(dest_addr_arg) is None):
                 print("Error: cannot duplicate connection!")
                 return
             
@@ -97,6 +97,7 @@ class Peer:
         # NOTE We get the socket to send TERMINATE message first. Then we send that to the selected peer for graceful notification before closing (thus that connection too!)
         self.proto_out.write_message(target[0], pconsts.PROTO_ACTION_TERMINATE, None)
 
+        target[0].close()
         del self.connection_dict[target[1]]
         self.connection_list.remove(target)
     
@@ -105,7 +106,12 @@ class Peer:
             print("Error: expected ID and message!\n")
             return
         
-        real_peer_cid = int(id_arg) - 1
+        real_peer_cid = -1
+
+        try:
+            real_peer_cid = int(id_arg) - 1
+        except Exception as err:
+            pass
 
         # validate send command arguments by two criteria: ID exists and len(msg) <= 100...
         if real_peer_cid < 0 or real_peer_cid >= len(self.connection_list):
@@ -146,19 +152,18 @@ class Peer:
 
     def run(self):
         # NOTE We setup listening socket for its usability...
-        self.listen_socket.bind(self.my_address)
+        self.listen_socket.bind(("", self.my_port))
         self.listen_socket.listen(DEFAULT_BACKLOG)
 
         # NOTE We define local functions to contain connection handling logic since Python lambdas are less flexible (possibly limited to one-line functions)
-        def handle_peer(args: tuple[socket.socket, socket._RetAddress]):
+        def handle_peer(peer_sock, peer_addr):
             """
                 @brief Runnable function on Python thread for mainly recieving messages from other peers. See Protocol.md for messaging format details.
                 @param args State of the currently handled peer connection.
             """
             protocol_util = proto.Messager()
-            peer_sock, peer_addr = args
-            try:
-                while True:
+            while True:
+                try:
                     verb, argv = protocol_util.read_message(peer_sock)
 
                     if verb == pconsts.PROTO_ACTION_TERMINATE:
@@ -166,14 +171,14 @@ class Peer:
                         # NOTE We must end this worker thread since its connection is dead.
                         break
                     elif verb == pconsts.PROTO_ACTION_SEND:
-                        print(f"Message recieved from {peer_addr}"
-                          f"Sender's port: {peer_addr[1]}"
+                        print(f"Message recieved from {peer_addr}\n"
+                          f"Sender's port: {peer_addr[1]}\n"
                           f"Message: \"{' '.join(argv)}\"")
-            except Exception as sock_err:
-                print(f"Error: bad I/O on connection of {peer_addr}: {sock_err}")
+                except Exception as sock_err:
+                    print(f"Error: bad I/O on connection of {peer_addr}:\n{sock_err}")
 
             # NOTE By instructions, remove dead peer connection state after peer leaves!
-            del self.connection_dict[peer_addr[0]]
+            del self.connection_dict[f"{peer_addr}"]
             self.connection_list.remove(peer_addr)
 
         def handle_incoming():
@@ -185,10 +190,10 @@ class Peer:
                 while True:
                     # NOTE accept incoming peer connection to handle soon with a worker-like thread (see handle_peer)
                     new_conn = self.listen_socket.accept()
-                    self.connection_dict[new_conn[0]] = new_conn
+                    self.connection_dict[f"{new_conn[1]}"] = new_conn
                     self.connection_list.append(new_conn)
 
-                    threading.Thread(target=handle_peer, args=new_conn).start()
+                    threading.Thread(target=handle_peer, args=[new_conn[0], new_conn[1]]).start()
             except Exception as sock_err:
                 print("Stopped listening for connections...")
         
@@ -199,7 +204,6 @@ class Peer:
         """
             For cleanup after REPL exiting: closes listening socket and its other accepted connections, etc.
         """
-        self.listen_socket.close()
 
         # TODO send exiting / closing messages per protocol to all other peers for their notice
         for conn in self.connection_list:
@@ -209,6 +213,8 @@ class Peer:
                 temp_sock.close()
             except Exception as io_err:
                 pass
+
+        self.listen_socket.close()
 
 # NOTE We must begin the main code here under guarding if: no accidental runs on import in Python!
 if __name__ == '__main__':
