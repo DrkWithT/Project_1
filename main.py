@@ -6,26 +6,35 @@
 import socket
 import threading
 import sys
-import select
+import time
 
-#storing connection
-connection_list = []
-
+# Store connection information
+connections = {}
+connections_lock = threading.Lock()
+my_port = None
+my_ip = None
 
 def handle_client(conn, addr):
-    print(f"New connection from {addr} connected.")
-    connection_list.append(conn)
-    while True:
-        # might change this part, not sure
-        try:
+    try:
+        while True:
             message = conn.recv(4096).decode("utf-8")
-            if not message:
+            if not message or message == "TERMINATE":
                 break
-            message = f"Message received: {message}"
-            conn.send(message.encode("utf-8"))
-        except Exception as e:
-            print(f"Error {e}")
-    conn.close()
+            print(f"\nMessage received from {addr[0]}")
+            print(f"Sender’s Port: {addr[1]}")
+            print(f"Message: \"{message}\"")
+            print("> ", end='', flush=True)
+
+    except Exception as e:
+        print(f"\nError with {addr[0]}:{addr[1]} - {e}")
+
+    finally:
+        conn.close()
+        connection_id = next((cid for cid, c in connections.items() if c[0] == conn), None)
+        if connection_id:
+            del connections[connection_id]
+        print(f"\nConnection from {addr[0]}:{addr[1]} closed.")
+        print("> ", end='', flush=True)
 
 def command_help():
     help_message = ("1.help - Display this help message \n"
@@ -47,73 +56,168 @@ def command_myip():
 
 def command_send(connection_id, message):
     try:
-        #-1 because of the index
-        print(connection_list)
-        connection = connection_list[int(connection_id) - 1]
-        connection[0].send(message.encode("utf-8"))
-        print(f"Message sent")
+        connection_id = int(connection_id)
+        with connections_lock:
+            if connection_id in connections:
+                conn = connections[connection_id][0]
+                conn.send(message.encode("utf-8"))
+                print(f"Message sent to connection ID {connection_id}.")
+            else:
+                print(f"Connection ID {connection_id} does not exist.")
+
     except Exception as e:
-        print(f"Error {e}")
+        print(f"Error sending message: {e}")
+
+def is_valid_ip(ip):
+    try:
+        socket.inet_aton(ip)
+        return True
+    except socket.error:
+        return False
 
 def command_connect(target_ip, port):
+    if not is_valid_ip(target_ip):
+        print("Error: Invalid IP address.")
+        return
+
+    if target_ip == my_ip and int(port) == int(my_port):
+        print("Error: Cannot connect to self.")
+        return
+
+    with connections_lock:
+        for conn in connections.values():
+            if conn[1][0] == target_ip and int(conn[1][1]) == int(port):
+                print("Error: Duplicate connection.")
+                return
+
     try:
         connect_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         connect_socket.connect((target_ip, int(port)))
-        print(f"Connected to {target_ip}:{port}")
 
-        connection_list.append(connect_socket)
+        connect_socket.send(str(my_port).encode('utf-8'))
+        peer_listening_port = connect_socket.recv(1024).decode('utf-8')
+
+        with connections_lock:
+            connection_id = len(connections) + 1
+            connections[connection_id] = (connect_socket, (target_ip, peer_listening_port))
+
+        print(f"Connected to {target_ip}:{peer_listening_port} as ID: {connection_id}")
+        threading.Thread(target=handle_client, args=(connect_socket, (target_ip, peer_listening_port))).start()
     except Exception as e:
-        print(f"Error {e}")
+        print(f"Connection error: {e}")
 
-def commend_terminate(connection_id):
+def command_terminate(connection_id):
     try:
-        connection = connection_list[int(connection_id) - 1]
-        connection[0].close()
+        connection_id = int(connection_id)
+        with connections_lock:
+            if connection_id in connections:
+                conn, addr = connections[connection_id]
+                conn.send("TERMINATE".encode('utf-8'))
+                time.sleep(1)  # Allow time for the message to be sent and received
+
+                conn.shutdown(socket.SHUT_RDWR)
+                conn.close()
+
+                print(f"Connection ID {connection_id} terminated.")
+            else:
+                print(f"Connection ID {connection_id} does not exist.")
+
     except Exception as e:
-        print(f"Error {e}")
+        print(f"\nError terminating connection: {e}")
+
+def command_exit(server_socket):
+    # Close all existing connections
+    with connections_lock:
+        for cid in list(connections.keys()):
+            conn, addr = connections[cid]
+            try:
+                conn.send("TERMINATE".encode('utf-8'))
+                time.sleep(1)  # Allow time for the message to be sent and received
+
+                conn.shutdown(socket.SHUT_RDWR) # check it later
+                conn.close()
+            except:
+                pass
+
+    print("Shutting down the server...")
+    sys.exit(0)
+
+def command_list():
+    """Display a list of all active connections."""
+    with connections_lock:
+        if connections:
+            print("id: IP Address       Port No.")
+            for cid, (conn, addr) in connections.items():
+                print(f"{cid}:   {addr[0]:<15} {addr[1]}")
+        else:
+            print("No active connections.")
 
 def start_ServerClient(port):
+    global my_ip, my_port
+    my_port = port
+    my_ip = command_myip()
+
     server_side = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     server_side.bind((command_myip(), int(port)))
     server_side.listen(5)
 
-    print(f"Server start, listening on:{command_myip()}:{port}")
+    print(f"Server started, listening on: {my_ip}:{port}")
 
     # start a thread to accept one client connection
     def accept_connect():
         #make it keep running
         while True:
             conn, addr = server_side.accept()
-            thread = threading.Thread(target=handle_client, args=(conn, addr))
-            thread.start()
-            print(f"Accepted connection from {addr}")
+
+            peer_listening_port = conn.recv(1024).decode('utf-8')
+            conn.send(str(my_port).encode('utf-8'))
+
+            with connections_lock:
+                connection_id = len(connections) + 1
+                connections[connection_id] = (conn, (addr[0], peer_listening_port))
+
+            threading.Thread(target=handle_client, args=(conn, (addr[0], peer_listening_port))).start()
+            print(f"\nAccepted connection from {addr[0]}:{peer_listening_port} as ID: {connection_id}")
+            print("> ", end='', flush=True)
 
     #start a thread to keep running and accept one client connection, so we can continue the code
-    threading.Thread(target=accept_connect).start()
+    threading.Thread(target=accept_connect, daemon=True).start()
 
     while True:
-        command = input("> ").strip().split(" ")
+        command = input("> ").strip()
+        if not command:
+            continue
+        parts = command.split()
+        cmd = parts[0]
 
-        if command[0] == "help":
+        if cmd == "help":
             print(command_help())
-        elif command[0] == "myip":
-            print(command_myip())
-        elif command[0] == "myport":
-            print(f"The port number is {port}")
-        elif command[0] == "connect":
-            command_connect(command[1], command[2])
-        elif command[0] == "send":
-            command_send(command[1], command[2])
-
-
-    sys.exit(0)
+        elif cmd == "myip":
+            print(my_ip)
+        elif cmd == "myport":
+            print(f"The port number is {my_port}")
+        elif cmd == "connect" and len(parts) == 3:
+            command_connect(parts[1], parts[2])
+        elif cmd == "send" and len(parts) >= 3:
+            connection_id = parts[1]
+            message = ' '.join(parts[2:])
+            command_send(connection_id, message)
+        elif cmd == "terminate" and len(parts) == 2:
+            command_terminate(parts[1])
+        elif cmd == "list":
+            command_list()
+        elif cmd == "exit":
+            command_exit(server_side)
+        else:
+            print("Invalid command. Type 'help' for a list of commands.")
 
 if __name__ == '__main__':
     # start main code here
     # if command length nor right then exit
     if len(sys.argv) != 2:
-        print("Wrong format, please re-enter")
+        print("Wrong format, please re-enter. Usage: ./chat <port no.>")
         sys.exit(1)
 
     port_number = sys.argv[1]
     start_ServerClient(port_number)
+
