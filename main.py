@@ -13,6 +13,7 @@ connections = {}
 connections_lock = threading.Lock()
 my_port = None
 my_ip = None
+connection_index = 0
 
 def handle_client(conn, addr):
     terminate_flag = False
@@ -46,7 +47,7 @@ def command_help():
     help_message = ("1.help - Display this help message \n"
                     "2.myip - Display the IP address of the host\n"
                     "3.myport - Display the port number of the host\n"
-                    "4.connect <destination> <port no> - \n"
+                    "4.connect <destination> <port no> \n"
                     "5.list - Display a numbered list of all the coonections this process is part of\n"
                     "6.terminate <connection id> - Will terminate the connection\n"
                     "7.send <connection id> <message> - will send the message to the host on the connection\n"
@@ -82,6 +83,7 @@ def is_valid_ip(ip):
         return False
 
 def command_connect(target_ip, port):
+    global connection_index
     if not is_valid_ip(target_ip):
         print("Error: Invalid IP address.")
         return
@@ -104,10 +106,10 @@ def command_connect(target_ip, port):
         peer_listening_port = connect_socket.recv(1024).decode('utf-8')
 
         with connections_lock:
-            connection_id = len(connections) + 1
-            connections[connection_id] = (connect_socket, (target_ip, peer_listening_port))
+            connection_index += 1
+            connections[connection_index] = (connect_socket, (target_ip, peer_listening_port))
 
-        print(f"Connected to {target_ip}:{peer_listening_port} as ID: {connection_id}")
+        print(f"Connected to {target_ip}:{peer_listening_port} as ID: {connection_index}")
         threading.Thread(target=handle_client, args=(connect_socket, (target_ip, peer_listening_port))).start()
     except Exception as e:
         print(f"Connection error: {e}")
@@ -119,7 +121,7 @@ def command_terminate(connection_id):
             if connection_id in connections:
                 conn, addr = connections[connection_id]
                 conn.send("TERMINATE".encode('utf-8'))
-                # time.sleep(1)  # Allow time for the message to be sent and received
+                time.sleep(1)  # Allow time for the message to be sent and received
 
                 conn.shutdown(socket.SHUT_RDWR)
                 conn.close()
@@ -140,13 +142,12 @@ def command_exit(server_socket):
             try:
                 conn.send("TERMINATE".encode('utf-8'))
                 time.sleep(1)  # Allow time for the message to be sent and received
-
                 conn.shutdown(socket.SHUT_RDWR) # check it later
                 conn.close()
                 del connections[cid]
             except:
                 pass
-    server_socket.close()
+
     print("Shutting down the server...")
     sys.exit(0)
 
