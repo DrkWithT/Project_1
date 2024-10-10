@@ -13,12 +13,17 @@ connections = {}
 connections_lock = threading.Lock()
 my_port = None
 my_ip = None
+connection_index = 0
 
 def handle_client(conn, addr):
+    terminate_flag = False
     try:
         while True:
             message = conn.recv(4096).decode("utf-8")
-            if not message or message == "TERMINATE":
+            if not message:
+                break
+            if message == "TERMINATE":
+                terminate_flag = True
                 break
             print(f"\nMessage received from {addr[0]}")
             print(f"Sender’s Port: {addr[1]}")
@@ -29,18 +34,20 @@ def handle_client(conn, addr):
         print(f"\nError with {addr[0]}:{addr[1]} - {e}")
 
     finally:
-        conn.close()
-        connection_id = next((cid for cid, c in connections.items() if c[0] == conn), None)
-        if connection_id:
-            del connections[connection_id]
-        print(f"\nConnection from {addr[0]}:{addr[1]} closed.")
-        print("> ", end='', flush=True)
+        if terminate_flag:
+            with connections_lock:
+                conn.close()
+                connection_id = next((cid for cid, c in connections.items() if c[0] == conn), None)
+                if connection_id:
+                    del connections[connection_id]
+            print(f"\nConnection from {addr[0]}:{addr[1]} closed.")
+            print("> ", end='', flush=True)
 
 def command_help():
     help_message = ("1.help - Display this help message \n"
                     "2.myip - Display the IP address of the host\n"
                     "3.myport - Display the port number of the host\n"
-                    "4.connect <destination> <port no> - \n"
+                    "4.connect <destination> <port no> \n"
                     "5.list - Display a numbered list of all the coonections this process is part of\n"
                     "6.terminate <connection id> - Will terminate the connection\n"
                     "7.send <connection id> <message> - will send the message to the host on the connection\n"
@@ -76,6 +83,7 @@ def is_valid_ip(ip):
         return False
 
 def command_connect(target_ip, port):
+    global connection_index
     if not is_valid_ip(target_ip):
         print("Error: Invalid IP address.")
         return
@@ -98,10 +106,10 @@ def command_connect(target_ip, port):
         peer_listening_port = connect_socket.recv(1024).decode('utf-8')
 
         with connections_lock:
-            connection_id = len(connections) + 1
-            connections[connection_id] = (connect_socket, (target_ip, peer_listening_port))
+            connection_index += 1
+            connections[connection_index] = (connect_socket, (target_ip, peer_listening_port))
 
-        print(f"Connected to {target_ip}:{peer_listening_port} as ID: {connection_id}")
+        print(f"Connected to {target_ip}:{peer_listening_port} as ID: {connection_index}")
         threading.Thread(target=handle_client, args=(connect_socket, (target_ip, peer_listening_port))).start()
     except Exception as e:
         print(f"Connection error: {e}")
@@ -118,6 +126,7 @@ def command_terminate(connection_id):
                 conn.shutdown(socket.SHUT_RDWR)
                 conn.close()
 
+                del connections[connection_id]
                 print(f"Connection ID {connection_id} terminated.")
             else:
                 print(f"Connection ID {connection_id} does not exist.")
@@ -133,9 +142,9 @@ def command_exit(server_socket):
             try:
                 conn.send("TERMINATE".encode('utf-8'))
                 time.sleep(1)  # Allow time for the message to be sent and received
-
                 conn.shutdown(socket.SHUT_RDWR) # check it later
                 conn.close()
+                del connections[cid]
             except:
                 pass
 
