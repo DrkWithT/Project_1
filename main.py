@@ -82,10 +82,19 @@ def is_valid_ip(ip):
     except socket.error:
         return False
 
+def is_valid_port(port):
+    try:
+        # Convert to integer and check if it's in the valid range
+        port = int(port)
+        return 1 <= port <= 65535
+    except ValueError:
+        # Not a number
+        return False
+
 def command_connect(target_ip, port):
     global connection_index
-    if not is_valid_ip(target_ip):
-        print("Error: Invalid IP address.")
+    if not is_valid_ip(target_ip) or not is_valid_port(port):
+        print("Error: IP address or port number is invalid.")
         return
 
     if target_ip == my_ip and int(port) == int(my_port):
@@ -111,8 +120,13 @@ def command_connect(target_ip, port):
 
         print(f"Connected to {target_ip}:{peer_listening_port} as ID: {connection_index}")
         threading.Thread(target=handle_client, args=(connect_socket, (target_ip, peer_listening_port))).start()
+    except ConnectionRefusedError as e:
+        if e.errno == 10061:
+        # Handle the case where no service is running on the specified port
+            print(f"No service is running on {target_ip}:{port}, try another one.")
     except Exception as e:
         print(f"Connection error: {e}")
+
 
 def command_terminate(connection_id):
     try:
@@ -175,6 +189,7 @@ def start_ServerClient(port):
     # start a thread to accept one client connection
     def accept_connect():
         #make it keep running
+        global connection_index
         while True:
             conn, addr = server_side.accept()
 
@@ -182,11 +197,11 @@ def start_ServerClient(port):
             conn.send(str(my_port).encode('utf-8'))
 
             with connections_lock:
-                connection_id = len(connections) + 1
-                connections[connection_id] = (conn, (addr[0], peer_listening_port))
+                connection_index += 1
+                connections[connection_index] = (conn, (addr[0], peer_listening_port))
 
             threading.Thread(target=handle_client, args=(conn, (addr[0], peer_listening_port))).start()
-            print(f"\nAccepted connection from {addr[0]}:{peer_listening_port} as ID: {connection_id}")
+            print(f"\nAccepted connection from {addr[0]}:{peer_listening_port} as ID: {connection_index}")
             print("> ", end='', flush=True)
 
     #start a thread to keep running and accept one client connection, so we can continue the code
