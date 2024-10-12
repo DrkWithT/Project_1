@@ -2,7 +2,9 @@
     main.py
     Main code for the chat app peer. See instructions and docs folder for details.
     Group 6 of CS 4470 Fall 2024
+    Members: Derek Tan, Kyle Chau, Runyi Yang
 """
+
 import socket
 import threading
 import sys
@@ -253,5 +255,9 @@ if __name__ == '__main__':
         sys.exit(1)
 
     port_number = sys.argv[1]
-    start_ServerClient(port_number)
 
+    if not is_valid_port(port_number):
+        print(f"Invalid port argument: {port_number}\nMust be an integer between 1 to 65535")
+        sys.exit(1)
+
+    start_ServerClient(port_number)
