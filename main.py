@@ -55,10 +55,20 @@ def command_help():
     return help_message
 
 def command_myip():
-    ## getting the hostname by socket.gethostname() method
-    hostname = socket.gethostname()
-    ## getting the IP address using socket.gethostbyname() method
-    ip_address = socket.gethostbyname(hostname)
+    # ## getting the hostname by socket.gethostname() method
+    # hostname = socket.gethostname()
+    # ## getting the IP address using socket.gethostbyname() method
+    # ip_address = socket.gethostbyname(hostname)
+    available_addresses = socket.gethostbyname_ex(socket.gethostname())[2]
+
+    # set IP result... default is loopback ONLY IF no other alternatives are found!
+    ip_address = "127.0.0.1"
+
+    # traverse list of available addresses for host machine...
+    for temp_ip in available_addresses:
+        if temp_ip != "127.0.0.1":
+            ip_address = temp_ip
+
     return ip_address
 
 def command_send(connection_id, message):
