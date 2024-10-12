@@ -2,7 +2,9 @@
     main.py
     Main code for the chat app peer. See instructions and docs folder for details.
     Group 6 of CS 4470 Fall 2024
+    Members: Derek Tan, Kyle Chau, Runyi Yang
 """
+
 import socket
 import threading
 import sys
@@ -55,10 +57,20 @@ def command_help():
     return help_message
 
 def command_myip():
-    ## getting the hostname by socket.gethostname() method
-    hostname = socket.gethostname()
-    ## getting the IP address using socket.gethostbyname() method
-    ip_address = socket.gethostbyname(hostname)
+    # ## getting the hostname by socket.gethostname() method
+    # hostname = socket.gethostname()
+    # ## getting the IP address using socket.gethostbyname() method
+    # ip_address = socket.gethostbyname(hostname)
+    available_addresses = socket.gethostbyname_ex(socket.gethostname())[2]
+
+    # set IP result... default is loopback ONLY IF no other alternatives are found!
+    ip_address = "127.0.0.1"
+
+    # traverse list of available addresses for host machine...
+    for temp_ip in available_addresses:
+        if temp_ip != "127.0.0.1":
+            ip_address = temp_ip
+
     return ip_address
 
 def command_send(connection_id, message):
@@ -243,5 +255,9 @@ if __name__ == '__main__':
         sys.exit(1)
 
     port_number = sys.argv[1]
-    start_ServerClient(port_number)
 
+    if not is_valid_port(port_number):
+        print(f"Invalid port argument: {port_number}\nMust be an integer between 1 to 65535")
+        sys.exit(1)
+
+    start_ServerClient(port_number)
