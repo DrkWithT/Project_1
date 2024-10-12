@@ -2,6 +2,7 @@
     main.py\n
     Main code for the chat app peer. See instructions and docs folder for details.\n
     Group 6 of CS 4470 Fall 2024
+    TODO Refactor this to use a dictionary of IDs to connection state. See comment in constructor.
 """
 
 import sys
@@ -18,12 +19,11 @@ class Peer:
         self.my_address = socket.gethostbyname_ex(socket.gethostname())[2][1]
         self.my_port = port
         self.listen_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        # group of currently added connections, imitate a unique set
-        self.connection_dict: dict[str, tuple] = {}
         # for holding both peer initiated and other initiated connection states
+        # self.connections = {} # dict[str of id, list[socket.socket, str of ip, str of port]]
         self.connection_list: list[tuple] = []
         # for outgoing messages by our protocol
-        self.proto_out = proto.Messager()
+        self.proto_msgr = proto.Messager()
 
     def do_help_cmd(self):
         # show all required commands' descriptions
@@ -58,19 +58,21 @@ class Peer:
                 print("Error: self-connections disallowed.")
                 return
 
-            if not (self.connection_dict.get(dest_addr_arg) is None):
+            if self.connection_list.count(temp_conn):
                 print("Error: cannot duplicate connection!")
                 return
             
-            if len(self.connection_dict) == 3:
+            if len(self.connection_list) == 3:
                 print("Error: cannot exceed 3 peer connections!")
                 return
 
             temp_socket.connect(temp_addr)
+            self.proto_msgr.write_message(temp_socket, pconsts.PROTO_ACTION_CONNECT, [port_arg])
+
+            # TODO launch handle_client thread for this temp_socket!!
 
             print(f"Connected to {dest_addr_arg}:{port_arg}")
             self.connection_list.append(temp_conn)
-            self.connection_dict[dest_addr_arg] = temp_conn
         except Exception as err:
             print(f"Error: {err}")
 
@@ -95,10 +97,9 @@ class Peer:
         target = self.connection_list[real_id_pos]
 
         # NOTE We get the socket to send TERMINATE message first. Then we send that to the selected peer for graceful notification before closing (thus that connection too!)
-        self.proto_out.write_message(target[0], pconsts.PROTO_ACTION_TERMINATE, None)
+        self.proto_msgr.write_message(target[0], pconsts.PROTO_ACTION_TERMINATE, None)
 
         target[0].close()
-        del self.connection_dict[target[1]]
         self.connection_list.remove(target)
     
     def do_send_cmd(self, id_arg: str, msg: str):
@@ -123,7 +124,7 @@ class Peer:
             return
         
         for conn in self.connection_list:
-            self.proto_out.write_message(conn[0], pconsts.PROTO_ACTION_SEND, [msg])
+            self.proto_msgr.write_message(conn[0], pconsts.PROTO_ACTION_SEND, [msg])
 
     def repl(self):
         while True:
@@ -162,11 +163,13 @@ class Peer:
                 @param args State of the currently handled peer connection.
             """
             protocol_util = proto.Messager()
-            while True:
-                try:
+            try:
+                while True:
                     verb, argv = protocol_util.read_message(peer_sock)
 
-                    if verb == pconsts.PROTO_ACTION_TERMINATE:
+                    if verb == pconsts.PROTO_ACTION_ACK:
+                        print(f"Sent message to {peer_addr}.")
+                    elif verb == pconsts.PROTO_ACTION_TERMINATE:
                         print(f"Peer at {peer_addr} left the chat.")
                         # NOTE We must end this worker thread since its connection is dead.
                         break
@@ -174,12 +177,12 @@ class Peer:
                         print(f"Message recieved from {peer_addr}\n"
                           f"Sender's port: {peer_addr[1]}\n"
                           f"Message: \"{' '.join(argv)}\"")
-                except Exception as sock_err:
-                    print(f"Error: bad I/O on connection of {peer_addr}:\n{sock_err}")
+                        protocol_util.write_message(peer_sock, pconsts.PROTO_ACTION_ACK, None)
+            except Exception as sock_err:
+                print(f"Error: bad I/O on connection of {peer_addr}:\n{sock_err}")
 
             # NOTE By instructions, remove dead peer connection state after peer leaves!
-            del self.connection_dict[f"{peer_addr}"]
-            self.connection_list.remove(peer_addr)
+            self.connection_list.remove([peer_sock, peer_addr])
 
         def handle_incoming():
             """
@@ -188,12 +191,15 @@ class Peer:
             """
             try:
                 while True:
-                    # NOTE accept incoming peer connection to handle soon with a worker-like thread (see handle_peer)
+                    # accept incoming peer connection to handle soon...
                     new_conn = self.listen_socket.accept()
-                    self.connection_dict[f"{new_conn[1]}"] = new_conn
-                    self.connection_list.append(new_conn)
 
-                    threading.Thread(target=handle_peer, args=[new_conn[0], new_conn[1]]).start()
+                    # get CONN message of protocol for incoming peer's real port number (as string for now)
+                    verb, argv = self.proto_msgr.read_message(new_conn[0])
+
+                    # track new connection and then launch handling thread for it for correctness and avoiding blocking main thread...
+                    self.connection_list.append([new_conn[0], [new_conn[1][0], argv[0]]])
+                    threading.Thread(target=handle_peer, args=[new_conn[0], [new_conn[1][0], argv[0]]]).start()
             except Exception as sock_err:
                 print("Stopped listening for connections...")
         
@@ -209,7 +215,7 @@ class Peer:
         for conn in self.connection_list:
             try:
                 temp_sock = conn[0]
-                self.proto_out.write_message(temp_sock, pconsts.PROTO_ACTION_TERMINATE, None)
+                self.proto_msgr.write_message(temp_sock, pconsts.PROTO_ACTION_TERMINATE, None)
                 temp_sock.close()
             except Exception as io_err:
                 pass
